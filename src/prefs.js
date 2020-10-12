@@ -3,6 +3,7 @@
    Thomas Liebetraut <thomas@tommie-lie.de>
 */
 
+const Lang = imports.lang;
 const Gtk = imports.gi.Gtk;
 const GObject = imports.gi.GObject;
 
@@ -22,18 +23,18 @@ const Columns = {
 	ADJUSTMENT: 2
 }
 
-var TeaTimePrefsWidget = GObject.registerClass(
-class TeaTimePrefsWidget extends Gtk.Grid {
-	_init() {
-		super._init({
+const TeaTimePrefsWidget = new Lang.Class({
+	Name: 'TeaTimePrefsWidget',
+	Extends: Gtk.Grid,
+
+	_init: function () {
+		this.parent({
 			orientation: Gtk.Orientation.VERTICAL,
 			column_homogeneous: false,
 			vexpand: true,
 			margin: 5,
 			row_spacing: 5
 		});
-
-		this.config_keys = Utils.GetConfigKeys();
 
 		this._tealist = new Gtk.ListStore();
 		this._tealist.set_column_types([
@@ -46,17 +47,21 @@ class TeaTimePrefsWidget extends Gtk.Grid {
 
 		this._settings = Utils.getSettings();
 		this._inhibitUpdate = true;
-		this._settings.connect("changed", this._refresh.bind(this));
+		this._settings.connect("changed", Lang.bind(this, this._refresh));
 
 		this._initWindow();
 		this._inhibitUpdate = false;
 		this._refresh();
-		this._tealist.connect("row-changed", this._save.bind(this));
-		this._tealist.connect("row-deleted", this._save.bind(this));
-	}
-
-	_initWindow() {
+		this._tealist.connect("row-changed", Lang.bind(this, this._save));
+		this._tealist.connect("row-deleted", Lang.bind(this, this._save));
+	},
+	_initWindow: function () {
 		let curRow = 0;
+		let labelFN = new Gtk.Label({
+			label: _("Fullscreen Notifications"),
+			hexpand: true,
+			halign: Gtk.Align.START
+		});
 		let labelGC = new Gtk.Label({
 			label: _("Graphical Countdown"),
 			hexpand: true,
@@ -69,12 +74,15 @@ class TeaTimePrefsWidget extends Gtk.Grid {
 			halign: Gtk.Align.START
 		});
 
+		this.fullscreenNotificationSwitch = new Gtk.Switch();
+		this.fullscreenNotificationSwitch.connect("notify::active", Lang.bind(this, this._saveFullscreenNotifications));
+
 		this.graphicalCountdownSwitch = new Gtk.Switch();
-		this.graphicalCountdownSwitch.connect("notify::active", this._saveGraphicalCountdown.bind(this));
+		this.graphicalCountdownSwitch.connect("notify::active", Lang.bind(this, this._saveGraphicalCountdown));
 
 		// alarm sound file chooser
 		this.alarmSoundSwitch = new Gtk.Switch();
-		this.alarmSoundSwitch.connect("notify::active", this._saveUseAlarm.bind(this));
+		this.alarmSoundSwitch.connect("notify::active", Lang.bind(this, this._saveUseAlarm));
 
 
 		this.alarmSoundFile = new Gtk.FileChooserButton({
@@ -84,7 +92,15 @@ class TeaTimePrefsWidget extends Gtk.Grid {
 		this.alarmSoundFileFilter = new Gtk.FileFilter();
 		this.alarmSoundFile.set_filter(this.alarmSoundFileFilter);
 		this.alarmSoundFileFilter.add_mime_type("audio/*");
-		this.alarmSoundFile.connect("selection_changed", this._saveSoundFile.bind(this));
+		this.alarmSoundFile.connect("selection_changed", Lang.bind(this, this._saveSoundFile));
+
+
+		if (!Utils.isGnome34()) {
+			// Full screen notifications currently not working on GNOME 3.4, thus don't show the switch
+			this.attach(labelFN, 0 /*col*/ , curRow /*row*/ , 2 /*col span*/ , 1 /*row span*/ );
+			this.attach(this.fullscreenNotificationSwitch, 2, curRow, 1, 1);
+			curRow += 1;
+		}
 
 		this.attach(labelGC, 0 /*col*/ , curRow /*row*/ , 2 /*col span*/ , 1 /*row span*/ );
 		this.attach(this.graphicalCountdownSwitch, 2, curRow, 1, 1);
@@ -116,10 +132,10 @@ class TeaTimePrefsWidget extends Gtk.Grid {
 		// This makes life a little harder due to chaining of callbacks
 		// and the need for this._inhibitUpdate, but it feels a lot cleaner
 		// when the UI does not know about the config storage backend.
-		renderer.connect("edited", function (renderer, pathString, newValue) {
+		renderer.connect("edited", Lang.bind(this, function (renderer, pathString, newValue) {
 			let [store, iter] = this._tealist.get_iter(Gtk.TreePath.new_from_string(pathString));
 			this._tealist.set(iter, [Columns.TEA_NAME], [newValue]);
-		}.bind(this));
+		}));
 		teaname.pack_start(renderer, true);
 		teaname.add_attribute(renderer, "text", Columns.TEA_NAME);
 		this.treeview.append_column(teaname);
@@ -132,10 +148,10 @@ class TeaTimePrefsWidget extends Gtk.Grid {
 			editable: true
 		});
 		// See comment above.
-		spinrenderer.connect("edited", function (renderer, pathString, newValue) {
+		spinrenderer.connect("edited", Lang.bind(this, function (renderer, pathString, newValue) {
 			let [store, iter] = this._tealist.get_iter(Gtk.TreePath.new_from_string(pathString));
 			this._tealist.set(iter, [Columns.STEEP_TIME], [parseInt(newValue)]);
-		}.bind(this));
+		}));
 
 		steeptime.pack_start(spinrenderer, true);
 		steeptime.add_attribute(spinrenderer, "adjustment", Columns.ADJUSTMENT);
@@ -152,20 +168,21 @@ class TeaTimePrefsWidget extends Gtk.Grid {
 			icon_name: "list-add-symbolic",
 			use_action_appearance: false
 		});
-		this.addButton.connect("clicked", this._addTea.bind(this));
+		this.addButton.connect("clicked", Lang.bind(this, this._addTea));
 		this.toolbar.insert(this.addButton, -1);
 		this.removeButton = new Gtk.ToolButton({
 			icon_name: "list-remove-symbolic",
 			use_action_appearance: false
 		});
-		this.removeButton.connect("clicked", this._removeSelectedTea.bind(this));
+		this.removeButton.connect("clicked", Lang.bind(this, this._removeSelectedTea));
 		this.toolbar.insert(this.removeButton, -1);
-	}
-
-	_refresh() {
+	},
+	_refresh: function () {
 		// don't update the model if someone else is messing with the backend
 		if (this._inhibitUpdate)
 			return;
+
+		this.fullscreenNotificationSwitch.active = this._settings.get_boolean(this.config_keys.fullscreen_notification)
 
 		this.graphicalCountdownSwitch.active = this._settings.get_boolean(this.config_keys.graphical_countdown)
 		this.alarmSoundSwitch.active = this._settings.get_boolean(this.config_keys.use_alarm_sound)
@@ -191,9 +208,8 @@ class TeaTimePrefsWidget extends Gtk.Grid {
 		}
 
 		this._inhibitUpdate = false;
-	}
-
-	_addTea() {
+	},
+	_addTea: function () {
 		let adj = new Gtk.Adjustment({
 			lower: 1,
 			step_increment: 1,
@@ -205,9 +221,8 @@ class TeaTimePrefsWidget extends Gtk.Grid {
 		this.treeview.set_cursor(this._tealist.get_path(item),
 			this.treeview.get_column(Columns.TEA_NAME),
 			true);
-	}
-
-	_removeSelectedTea() {
+	},
+	_removeSelectedTea: function () {
 		let [selection, store] = this.treeview.get_selection().get_selected_rows();
 		let iters = [];
 		for (let i = 0; i < selection.length; ++i) {
@@ -222,9 +237,17 @@ class TeaTimePrefsWidget extends Gtk.Grid {
 		});
 
 		this.treeview.get_selection().unselect_all();
-	}
-
-	_saveGraphicalCountdown(sw, data) {
+	},
+	_saveFullscreenNotifications: function (sw, data) {
+		// don't update the backend if someone else is messing with the model
+		if (this._inhibitUpdate)
+			return;
+		this._inhibitUpdate = true;
+		this._settings.set_boolean(this.config_keys.fullscreen_notification,
+			sw.active);
+		this._inhibitUpdate = false;
+	},
+	_saveGraphicalCountdown: function (sw, data) {
 		// don't update the backend if someone else is messing with the model
 		if (this._inhibitUpdate)
 			return;
@@ -232,9 +255,8 @@ class TeaTimePrefsWidget extends Gtk.Grid {
 		this._settings.set_boolean(this.config_keys.graphical_countdown,
 			sw.active);
 		this._inhibitUpdate = false;
-	}
-
-	_saveUseAlarm(sw, data) {
+	},
+	_saveUseAlarm: function (sw, data) {
 		// don't update the backend if someone else is messing with the model
 		if (this._inhibitUpdate)
 			return;
@@ -242,9 +264,8 @@ class TeaTimePrefsWidget extends Gtk.Grid {
 		this._settings.set_boolean(this.config_keys.use_alarm_sound,
 			sw.active);
 		this._inhibitUpdate = false;
-	}
-
-	_saveSoundFile(sw, data) {
+	},
+	_saveSoundFile: function (sw, data) {
 		// don't update the backend if someone else is messing with the model
 		if (this._inhibitUpdate)
 			return;
@@ -261,9 +282,8 @@ class TeaTimePrefsWidget extends Gtk.Grid {
 			this._settings.set_string(this.config_keys.alarm_sound, alarm_sound);
 			this._inhibitUpdate = false;
 		}
-	}
-
-	_save(store, path_, iter_) {
+	},
+	_save: function (store, path_, iter_) {
 		const GLib = imports.gi.GLib;
 
 		// don't update the backend if someone else is messing with the model
@@ -285,8 +305,10 @@ class TeaTimePrefsWidget extends Gtk.Grid {
 		this._settings.set_value(this.config_keys.steep_times, settingsValue);
 
 		this._inhibitUpdate = false;
-	}
+	},
+	config_keys: Utils.GetConfigKeys()
 });
+
 
 function init() {}
 
